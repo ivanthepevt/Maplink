@@ -5,7 +5,7 @@ const source = ts.transpile(fs.readFileSync("maps.ts", "utf8"), { module: ts.Mod
 const exports = {}
 new Function("exports", source)(exports)
 const matches = exports.MAPS.flatMap(m => m.hosts.flatMap(h => [m.path, ...(m.frames || [])].map(p => `https://${h}${p}*`)))
-const bridgeMatches = exports.MAPS.filter(m => m.id === "vmaps" || m.id === "waze").flatMap(m => m.hosts.flatMap(h => (m.frames || [m.path]).map(p => `https://${h}${p}*`)))
+const bridgeMatches = exports.MAPS.filter(m => ["vmaps", "waze", "osm"].includes(m.id)).flatMap(m => m.hosts.flatMap(h => (m.id === "osm" ? ["/id"] : m.frames || [m.path]).map(p => `https://${h}${p}*`)))
 for (const file of ["content.ts", "contents/page.ts"]) {
   const text = fs.readFileSync(file, "utf8")
   fs.writeFileSync(file, text.replace(/matches: \[[^\]]*\]/, `matches: ${JSON.stringify(file === "contents/page.ts" ? (bridgeMatches.length ? bridgeMatches : matches) : matches)}`))

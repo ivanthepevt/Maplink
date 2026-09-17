@@ -5,11 +5,12 @@ export const config: PlasmoCSConfig = { matches: ["https://nonprod-mapops.vmaps.
 const vmapsFrame = location.hostname === "nonprod-mapops.vmaps.vn" && location.pathname === "/hdmap.html"
 const provider = detectProvider(location.href)
 const bridged = vmapsFrame || provider?.id === "waze"
+const osmEditor = provider?.id === "osm" && location.pathname === "/id"
 let linked = false
 let indicator: HTMLButtonElement | undefined
 function showStatus(value: boolean) {
   linked = value
-  if (bridged) window.postMessage({ type: "MAPLINK_LINKED", linked }, location.origin)
+  if (bridged || osmEditor) window.postMessage({ type: "MAPLINK_LINKED", linked }, location.origin)
   if (indicator) {
     indicator.textContent = `MapLink ${linked ? "●" : "○"}`
     indicator.title = linked ? "Linked — click to disconnect" : "Not linked — click to activate"
@@ -55,7 +56,7 @@ function getClickedCoordinate(event: MouseEvent): LocationMessage | undefined {
   }
   if (!(target instanceof Element)) return
   if (target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], [role="dialog"], .leaflet-control, .leaflet-popup, .maplibregl-ctrl')) return
-  const surface = provider?.id === "osm" ? target.closest("#map")
+  const surface = provider?.id === "osm" ? target.closest(".main-map .supersurface, #map")
     : provider?.id === "mapillary" || provider?.id === "ndamaps" ? target.closest("canvas.maplibregl-canvas")
     : target.closest('[role="application"]')
   // Google replaces canvases and puts non-canvas interaction layers above them.
@@ -77,8 +78,19 @@ function navigateVMaps(p: LocationMessage) {
   window.postMessage({ ...p, type: "MAPLINK_NAVIGATE" }, location.origin)
   try { window.parent.location.hash = `${Number(window.parent.location.hash.slice(1).split("/")[0]) || 18}/${p.lat}/${p.lon}/0.0/0` } catch {}
 }
-function navigateOSM(p: LocationMessage) { location.href = `https://www.openstreetmap.org/#map=${view()?.zoom ?? 18}/${p.lat.toFixed(7)}/${p.lon.toFixed(7)}` }
-function navigateGoogle(p: LocationMessage) { location.href = `https://www.google.com/maps/@${p.lat},${p.lon},${view()?.zoom ?? 18}z` }
+function navigateOSM(p: LocationMessage) {
+  // OSM forwards external hash changes into iD; do not reload its iframe too.
+  if (window !== window.top) return
+  const hash = new URLSearchParams(location.hash.slice(1))
+  hash.set("map", `${view()?.zoom ?? 18}/${p.lat.toFixed(7)}/${p.lon.toFixed(7)}`)
+  location.hash = hash.toString().replace(/%2F/gi, "/")
+  console.debug(`[MapLink][OSM] mode=${location.pathname.startsWith("/edit") ? "edit" : "view"} preserved pathname=${location.pathname}`)
+}
+function navigateGoogle(p: LocationMessage) {
+  // Keep Satellite data and the current camera representation (z or m).
+  const camera = /@-?[\d.]+,-?[\d.]+,([\d.]+[zm])(?=\/|\?|$)/
+  location.href = camera.test(location.href) ? location.href.replace(camera, `@${p.lat},${p.lon},$1`) : `https://www.google.com/maps/@${p.lat},${p.lon},18z`
+}
 function navigateMapillary(p: LocationMessage) {
   const u = new URL(location.href)
   for (const key of ["pKey", "x", "y", "zoom"]) u.searchParams.delete(key)
@@ -88,11 +100,26 @@ function navigateMapillary(p: LocationMessage) {
 }
 function navigateNDA(p: LocationMessage) { location.href = `${location.origin}/#map=${view()?.zoom ?? 18}/${p.lat}/${p.lon}` }
 function copyCoordinate(p: LocationMessage) {
-  void navigator.clipboard.writeText(`${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`).then(
-    () => console.debug("[MapLink] copied"), error => console.warn("[MapLink] clipboard failed", error))
+  return navigator.clipboard.writeText(`${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`).then(
+    () => true, error => { console.warn("[MapLink] clipboard failed", error); return false })
 }
-function sendLocation(p: LocationMessage) {
-  void send(p).then(result => { if (result) console.debug(`[MapLink][${provider?.name ?? "VMaps"}] LOCATION sent`) })
+let toast: HTMLDivElement | undefined
+let toastTimer: ReturnType<typeof setTimeout> | undefined
+function showToast(p: LocationMessage, copied: boolean, recipients?: number) {
+  if (!document.body) return
+  toast?.remove(); clearTimeout(toastTimer)
+  toast = document.createElement("div")
+  toast.setAttribute("role", "status")
+  toast.style.cssText = "position:fixed;bottom:24px;right:12px;z-index:2147483647;pointer-events:none;background:#fff;color:#222;border:1px solid #bbb;border-radius:5px;padding:8px 12px;font:12px/1.6 system-ui;white-space:pre-line;box-shadow:0 2px 8px #0002"
+  toast.textContent = `${copied ? "✓ " : ""}${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}${copied ? " copied" : " — Clipboard failed"}\n${recipients === undefined ? "Broadcast failed" : `Sent to ${recipients} linked maps`}`
+  document.body.appendChild(toast)
+  toastTimer = setTimeout(() => { toast?.remove(); toast = undefined }, 2000)
+}
+function sendLocation(p: LocationMessage, copied: boolean | Promise<boolean>) {
+  void Promise.all([send(p), copied]).then(([result, success]) => {
+    if (result) console.debug(`[MapLink][${provider?.name ?? "VMaps"}] LOCATION sent`)
+    showToast(p, success, result?.recipients)
+  })
 }
 if (provider || vmapsFrame) {
   void send({ type: "STATUS" }).then(result => { if (result) showStatus(result.linked) })
@@ -107,11 +134,12 @@ if (provider || vmapsFrame) {
     else if (provider?.id === "ndamaps") navigateNDA(message)
   })
   window.addEventListener("message", event => {
-    if (!bridged || event.source !== window || event.origin !== location.origin) return
+    if ((!bridged && !osmEditor) || event.source !== window || event.origin !== location.origin) return
     if (event.data?.type === "MAPLINK_READY") { showStatus(linked); return }
+    if (!bridged) return
     if (!linked || event.data?.type !== "MAPLINK_CLICK") return
     const p: LocationMessage = { type: "LOCATION", lat: event.data.lat, lon: event.data.lon, zoom: event.data.zoom }
-    if (validLocation(p)) sendLocation(p) // The page bridge already copied during the gesture.
+    if (validLocation(p)) sendLocation(p, event.data.copied === true)
   })
   // Installed once, before site handlers; look up state and surfaces on each click.
   window.addEventListener("dblclick", event => {
@@ -119,8 +147,7 @@ if (provider || vmapsFrame) {
     const p = getClickedCoordinate(event)
     if (!p || !validLocation(p)) return
     event.preventDefault(); event.stopImmediatePropagation()
-    copyCoordinate(p)
-    sendLocation(p)
+    sendLocation(p, copyCoordinate(p))
   }, true)
   if (window === window.top) {
     const mount = () => {

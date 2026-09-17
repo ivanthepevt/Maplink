@@ -1,7 +1,7 @@
 {
   "name": "maplink",
   "displayName": "MapLink",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Link map tabs with a double-click.",
   "scripts": {

@@ -1,4 +1,4 @@
-import { detectProvider, validLocation, type LocationMessage } from "./maps"
+import { detectProvider, mapLabel, validLocation, type LocationMessage } from "./maps"
 
 // Serialize storage updates so simultaneous popup actions cannot lose a tab.
 let queue = Promise.resolve()
@@ -9,7 +9,10 @@ async function handle(message: any, sender: chrome.runtime.MessageSender) {
   const tabId = sender.tab?.id ?? message.tabId
   if (typeof tabId !== "number") throw new Error("No current tab")
   const ids = await linkedTabs()
-  if (message.type === "STATUS") return { linked: ids.includes(tabId), count: ids.length }
+  if (message.type === "STATUS") {
+    const maps = message.list ? (await chrome.tabs.query({})).filter(t => ids.includes(t.id!) && detectProvider(t.url || "")).map(t => ({ tabId: t.id!, name: mapLabel(t.url || "")! })) : undefined
+    return { linked: ids.includes(tabId), count: maps?.length ?? ids.length, maps }
+  }
   if (message.type === "SET_LINKED") {
     const tab = await chrome.tabs.get(tabId)
     if (!detectProvider(tab.url || "")) throw new Error("Unsupported page")
@@ -21,10 +24,15 @@ async function handle(message: any, sender: chrome.runtime.MessageSender) {
   if (validLocation(message as LocationMessage) && sender.tab?.id !== undefined && ids.includes(tabId)) {
     const source = await chrome.tabs.get(tabId)
     if (!detectProvider(source.url || "")) return
+    let recipients = 0
     await Promise.all(ids.filter(id => id !== tabId).map(async id => {
       const tab = await chrome.tabs.get(id).catch(() => undefined)
-      if (detectProvider(tab?.url || "")) await chrome.tabs.sendMessage(id, message).catch(() => {})
+      if (detectProvider(tab?.url || "")) {
+        recipients++ // Attempted delivery, not a map-rendering acknowledgement.
+        await chrome.tabs.sendMessage(id, message).catch(() => {})
+      }
     }))
+    return { ok: true, recipients }
   }
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {

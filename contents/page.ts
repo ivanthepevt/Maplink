@@ -1,6 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 
-export const config: PlasmoCSConfig = { matches: ["https://nonprod-mapops.vmaps.vn/hdmap.html*","https://waze.com/*editor*","https://www.waze.com/*editor*"], all_frames: true, world: "MAIN", run_at: "document_start" }
+export const config: PlasmoCSConfig = { matches: ["https://nonprod-mapops.vmaps.vn/hdmap.html*","https://www.openstreetmap.org/id*","https://waze.com/*editor*","https://www.waze.com/*editor*"], all_frames: true, world: "MAIN", run_at: "document_start" }
 
 type MapAPI = { unproject(p: [number, number]): { lat: number; lng: number }; getZoom(): number; getCanvas(): HTMLCanvasElement; jumpTo(o: { center: [number, number]; zoom: number; bearing: number; pitch: number }): void }
 type WazeMap = { getLonLatFromPixel(p: { x: number; y: number }): { lat: number; lon: number }; getZoomLevel(): number; getMapViewportElement(): HTMLElement; setMapCenter(p: { lonLat: { lat: number; lon: number } }): void }
@@ -9,6 +9,38 @@ const vmaps = location.hostname === "nonprod-mapops.vmaps.vn" && location.pathna
 const waze = /(^|\.)waze\.com$/.test(location.hostname) && /^\/(?:[^/]+\/)*editor(?:\/|$)/.test(location.pathname)
 let linked = false
 let sdk: { Map: WazeMap } | undefined
+// iD implements double-click zoom on pointer-up, before DOM dblclick fires.
+// Capture its context at creation; keep all normal pointer/editing handlers.
+if (location.hostname === "www.openstreetmap.org" && location.pathname === "/id") {
+  let setZoom: ((value: boolean) => void) | undefined
+  window.addEventListener("message", event => {
+    if (event.source !== window || event.origin !== location.origin || event.data?.type !== "MAPLINK_LINKED") return
+    linked = event.data.linked === true
+    setZoom?.(linked)
+  })
+  document.addEventListener("DOMContentLoaded", () => {
+    type IdMap = { dblclickZoomEnable(value?: boolean): boolean | IdMap }
+    const idPage = window as Window & { iD?: { coreContext: (...args: unknown[]) => { map(): IdMap } } }
+    const id = idPage.iD
+    if (!id) return
+    const create = id.coreContext
+    id.coreContext = function (...args) {
+      const context = create.apply(this, args), map = context.map()
+      const enable = map.dblclickZoomEnable.bind(map)
+      let nativeZoom = enable() === true
+      map.dblclickZoomEnable = value => {
+        if (value === undefined) return enable()
+        nativeZoom = value
+        return enable(linked ? false : value)
+      }
+      setZoom = active => { enable(active ? false : nativeZoom) }
+      setZoom(linked)
+      console.debug("[MapLink][OSM] iD double-click zoom hook ready")
+      return context
+    }
+    window.postMessage({ type: "MAPLINK_READY" }, location.origin)
+  }, { once: true })
+}
 if (vmaps || waze) {
   if (waze) {
     const init = async () => {
@@ -52,8 +84,9 @@ if (vmaps || waze) {
     if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return
     event.preventDefault(); event.stopImmediatePropagation()
     const text = `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`
-    void navigator.clipboard.writeText(text).then(() => console.debug("[MapLink] copied"), error => console.warn("[MapLink] clipboard failed", error))
+    void navigator.clipboard.writeText(text).then(() => true, error => { console.warn("[MapLink] clipboard failed", error); return false }).then(copied => {
+      window.postMessage({ type: "MAPLINK_CLICK", ...p, zoom, copied }, location.origin)
+    })
     console.debug(`[MapLink][${vmaps ? "VMaps" : "Waze"}] dblclick ${text}`)
-    window.postMessage({ type: "MAPLINK_CLICK", ...p, zoom }, location.origin)
   }, true)
 }

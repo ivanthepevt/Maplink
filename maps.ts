@@ -16,6 +16,10 @@ export function detectProvider(url: string) {
 }
 
 export type LocationMessage = { type: "LOCATION"; lat: number; lon: number; zoom?: number }
+export function mapLabel(url: string) {
+  const map = detectProvider(url)
+  return map?.id === "osm" ? `${map.name} · ${new URL(url).pathname.startsWith("/edit") || new URL(url).pathname === "/id" ? "Edit" : "View"}` : map?.name
+}
 export function validLocation(m: LocationMessage): boolean {
   return m?.type === "LOCATION" && Number.isFinite(m.lat) && Math.abs(m.lat) <= 90 && Number.isFinite(m.lon) && Math.abs(m.lon) <= 180 && (m.zoom === undefined || (Number.isFinite(m.zoom) && m.zoom >= 0 && m.zoom <= 24))
 }
