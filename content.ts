@@ -54,7 +54,7 @@ function getClickedCoordinate(event: MouseEvent): LocationMessage | undefined {
     return
   }
   if (!(target instanceof Element)) return
-  if (target.closest('button, a, input, [role="button"], .leaflet-control')) return
+  if (target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], [role="dialog"], .leaflet-control, .leaflet-popup, .maplibregl-ctrl')) return
   const surface = provider?.id === "osm" ? target.closest("#map")
     : provider?.id === "mapillary" || provider?.id === "ndamaps" ? target.closest("canvas.maplibregl-canvas")
     : target.closest('[role="application"]')
