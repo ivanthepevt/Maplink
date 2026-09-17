@@ -1,0 +1,42 @@
+{
+  "name": "maplink",
+  "displayName": "MapLink",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Link map tabs with a double-click.",
+  "scripts": {
+    "dev": "node scripts/config.mjs && plasmo dev",
+    "build": "node scripts/config.mjs && plasmo build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "plasmo": "0.90.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.4"
+  },
+  "manifest": {
+    "permissions": [
+      "tabs",
+      "storage"
+    ],
+    "minimum_chrome_version": "111",
+    "host_permissions": [
+      "https://nonprod-mapops.vmaps.vn/editor-map/hdmap*",
+      "https://nonprod-mapops.vmaps.vn/hdmap.html*",
+      "https://www.openstreetmap.org/*",
+      "https://www.google.com/maps/*",
+      "https://mapillary.com/app/*",
+      "https://www.mapillary.com/app/*",
+      "https://ndamaps.vn/*",
+      "https://www.ndamaps.vn/*",
+      "https://waze.com/*editor*",
+      "https://www.waze.com/*editor*"
+    ]
+  }
+}
